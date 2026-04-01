@@ -1,95 +1,181 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Advanced Map Extractor</title>
+<title>Local Place Extractor</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
+:root {
+  --bg:#070b10;
+  --panel:#0f161e;
+  --panel2:#132031;
+  --text:#d8f7f0;
+  --muted:#74a3b5;
+  --accent:#00e5a0;
+  --accent2:#0fd2ba;
+  --red:#ff6b6b;
+}
+* { box-sizing:border-box; }
 body {
-  background:#0d0d0d;
-  color:#fff;
-  font-family:system-ui;
   margin:0;
+  font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: radial-gradient(circle at 20% 20%, #111720 0%, var(--bg) 45%, #05080f 100%);
+  color: var(--text);
 }
-
+.main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 18px;
+}
 .header {
-  padding:20px;
-  background:#111;
-  border-bottom:1px solid #222;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--panel);
+  border: 1px solid #1a2738;
+  border-radius: 14px;
+  padding: 14px;
 }
-
-input {
-  padding:10px;
-  margin:5px;
-  border-radius:6px;
-  border:1px solid #333;
-  background:#000;
-  color:#fff;
+.heading {
+  margin:0;
+  font-size: 1.34rem;
+  color: var(--accent);
 }
-
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+}
+input, select, button {
+  appearance: none;
+  border: 1px solid #1f3145;
+  background: #111a23;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.95rem;
+}
+input:focus, select:focus, button:focus { outline: 2px solid var(--accent); }
 button {
-  padding:10px 20px;
-  background:#00e5a0;
-  border:none;
-  border-radius:6px;
+  background: linear-gradient(120deg, var(--accent), var(--accent2));
+  color:#031210;
+  font-weight: 700;
   cursor:pointer;
-  font-weight:bold;
+  transition: transform .12s ease;
 }
-
-#map {
-  height:500px;
+button:hover { transform: translateY(-1px); }
+.button-secondary {
+  background: #1e2d3d;
+  color: var(--text);
 }
-
-.status {
-  padding:10px;
-  font-size:14px;
-  color:#aaa;
-}
+#categories { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.category { border:1px solid #1f3145; padding: 8px 12px; border-radius: 10px; cursor:pointer; color:#8ab6c4; user-select:none; }
+.category.selected { border-color: var(--accent); background: rgba(0,229,160,.15); color: #d8f7f0; }
+#locators { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
+#controls { display:flex; align-items:center; gap:10px; width:100%; }
+#map { height: 420px; border-radius: 14px; border: 1px solid #1c2e3f; margin-top: 12px; }
+#status { margin-top: 10px; color: var(--muted); }
+#results { margin-top: 16px; border:1px solid #1f3145; border-radius:12px; overflow:hidden; background:var(--panel2); }
+#results table { width:100%; border-collapse:collapse; }
+#results th, #results td { padding:10px; border-bottom:1px solid #1f3145; font-size:0.9rem; }
+#results th { text-align:left; background:#112534; color:#8fdde9; }
+#results tr:hover { background: #122f40; }
 </style>
 </head>
-
 <body>
+<div class="main">
+  <h1 class="heading">Extract local places by pincode</h1>
 
-<div class="header">
-  <input id="apiKey" placeholder="Google API Key" style="width:260px">
-  <input id="location" placeholder="Enter pincode or area">
-  <button onclick="start()">Search</button>
+  <div class="header">
+    <div style="flex:1; min-width:280px;">
+      <div id="locators">
+        <input id="apiKey" placeholder="Google Maps API Key" autocomplete="off">
+        <input id="location" placeholder="Pincode or area (e.g. 110001 or Connaught Place)">
+      </div>
+      <div id="categories"></div>
+      <div style="margin-top:10px; display:flex; align-items:center; gap:10px;">
+        <label style="font-size:0.9rem;color:#92b3c2;">Radius: <span id="radiusVal">2000</span>m</label>
+        <input id="radius" type="range" min="500" max="5000" step="100" value="2000" style="flex:1;">
+      </div>
+    </div>
+
+    <div id="controls">
+      <button onclick="start()">Extract</button>
+      <button class="button-secondary" onclick="resetAll()">Reset</button>
+    </div>
+  </div>
+
+  <div id="map"></div>
+  <div id="status">Ready</div>
+  <div id="results"></div>
 </div>
 
-<div id="map"></div>
-<div class="status" id="status">Ready</div>
-
 <script>
-let map, markers = [];
+const PLACE_CATEGORIES = [
+  {label:'Schools', type:'school'},
+  {label:'Colleges', type:'university'},
+  {label:'Hospitals', type:'hospital'},
+  {label:'Pharmacies', type:'pharmacy'},
+  {label:'Banks', type:'bank'},
+  {label:'ATMs', type:'atm'},
+  {label:'Post Offices', type:'post_office'},
+  {label:'Police', type:'police'},
+  {label:'Fire Stations', type:'fire_station'},
+  {label:'Restaurants', type:'restaurant'},
+  {label:'Hotels', type:'lodging'},
+  {label:'Markets', type:'supermarket'},
+  {label:'Gyms', type:'gym'},
+  {label:'Parks', type:'park'},
+  {label:'Fuel Stations', type:'gas_station'},
+  {label:'Offices', keyword:'office'},
+  {label:'Companies', keyword:'company'}
+];
 
-function setStatus(msg) {
-  document.getElementById("status").textContent = msg;
-}
+let map;
+let markers = [];
+let selected = new Set(['Schools','Hospitals','Banks','Restaurants']);
 
-// LOAD GOOGLE MAP (CORRECT WAY)
-function loadMap(apiKey) {
-  return new Promise((resolve, reject) => {
-    if (window.google) return resolve();
+const categoriesEl = document.getElementById('categories');
+const radiusEl = document.getElementById('radius');
+const radiusValEl = document.getElementById('radiusVal');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+const mapEl = document.getElementById('map');
 
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&loading=async`;
-    script.async = true;
-    script.defer = true;
+function logStatus(msg) { statusEl.textContent = msg; }
 
-    script.onload = resolve;
-    script.onerror = () => reject("Map failed to load");
-
-    document.head.appendChild(script);
+function renderCategories() {
+  categoriesEl.innerHTML = '';
+  PLACE_CATEGORIES.forEach(item => {
+    const el = document.createElement('div');
+    el.className = 'category' + (selected.has(item.label) ? ' selected' : '');
+    el.textContent = item.label;
+    el.addEventListener('click', () => {
+      if (selected.has(item.label)) selected.delete(item.label);
+      else selected.add(item.label);
+      renderCategories();
+    });
+    categoriesEl.appendChild(el);
   });
 }
 
-function initMap(lat, lon) {
-  map = new google.maps.Map(document.getElementById("map"), {
-    center: { lat, lng: lon },
-    zoom: 14
-  });
+radiusEl.addEventListener('input', () => {
+  radiusValEl.textContent = radiusEl.value;
+});
+
+function resetAll() {
+  document.getElementById('location').value = '';
+  document.getElementById('apiKey').value = '';
+  selected = new Set(['Schools','Hospitals','Banks','Restaurants']);
+  renderCategories();
+  clearMarkers();
+  if (map) map.setCenter({lat:20, lng:0});
+  resultsEl.innerHTML = '';
+  logStatus('Ready');
 }
 
 function clearMarkers() {
@@ -97,95 +183,211 @@ function clearMarkers() {
   markers = [];
 }
 
-function addMarker(p) {
-  const m = new google.maps.Marker({
-    position: { lat: p.lat, lng: p.lon },
+function addMarker(place) {
+  if (!place.geometry?.location) return;
+  const marker = new google.maps.Marker({
+    position: place.geometry.location,
     map,
-    title: p.name
+    title: place.name
   });
 
   const info = new google.maps.InfoWindow({
-    content: `<b>${p.name}</b><br>${p.type}`
+    content: `<strong>${place.name}</strong><br>${place.vicinity || ''}<br>${place.types?.[0] || ''}`
   });
 
-  m.addListener("click", () => info.open(map, m));
-  markers.push(m);
+  marker.addListener('click', () => info.open(map, marker));
+  markers.push(marker);
 }
 
-// SAFE GEOCODE
-async function geocode(q) {
-  const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`);
-  const data = await res.json();
+function renderResults(places) {
+  if (!places.length) {
+    resultsEl.innerHTML = '<div style="padding:12px; color:#a8d1da;">No results found.</div>';
+    return;
+  }
 
-  if (!data.length) throw "Location not found";
-
-  const lat = parseFloat(data[0].lat);
-  const lon = parseFloat(data[0].lon);
-
-  if (isNaN(lat) || isNaN(lon)) throw "Invalid coordinates";
-
-  return { lat, lon };
-}
-
-// LIMITED QUERY (avoid 429)
-async function fetchPlaces(lat, lon) {
-  const query = `
-  [out:json][timeout:15];
-  (
-    node["amenity"="restaurant"](around:1500,${lat},${lon});
-    node["amenity"="hospital"](around:1500,${lat},${lon});
-  );
-  out;
+  const table = document.createElement('table');
+  table.innerHTML = `
+    <thead><tr><th>Name</th><th>Address</th><th>Type</th><th>Rating</th></tr></thead>
+    <tbody></tbody>
   `;
 
-  const res = await fetch("https://overpass-api.de/api/interpreter", {
-    method: "POST",
-    body: query
+  const tbody = table.querySelector('tbody');
+  places.forEach(p => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${p.name || 'Unknown'}</td>
+      <td>${p.vicinity || p.formatted_address || '—'}</td>
+      <td>${(p.types && p.types[0]) || '—'}</td>
+      <td>${p.rating || '—'}</td>
+    `;
+    tbody.appendChild(tr);
   });
 
-  if (!res.ok) throw "Rate limit hit. Try again in 10 sec.";
-
-  const data = await res.json();
-
-  return data.elements.map(el => ({
-    name: el.tags?.name || "Unnamed",
-    type: el.tags?.amenity,
-    lat: el.lat,
-    lon: el.lon
-  }));
+  resultsEl.innerHTML = '';
+  resultsEl.appendChild(table);
 }
 
-// MAIN
-async function start() {
-  const key = document.getElementById("apiKey").value.trim();
-  const loc = document.getElementById("location").value.trim();
+function loadGoogleApi(apiKey) {
+  return new Promise((resolve, reject) => {
+    if (window.google && window.google.maps && window.google.maps.places) return resolve();
 
-  if (!key) return alert("Enter API key");
-  if (!loc) return alert("Enter location");
+    const existing = document.querySelector('script[data-google-places]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      existing.addEventListener('error', () => reject('Failed to load Google API'));
+      return;
+    }
 
-  try {
-    setStatus("Loading map...");
-    await loadMap(key);
+    const s = document.createElement('script');
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places`;
+    s.async = true;
+    s.defer = true;
+    s.dataset.googlePlaces = '1';
 
-    setStatus("Finding location...");
-    const geo = await geocode(loc);
+    s.onload = () => resolve();
+    s.onerror = () => reject('Failed to load Google Maps API. Check your key and network.');
 
-    initMap(geo.lat, geo.lon);
+    document.head.appendChild(s);
+  });
+}
 
-    setStatus("Fetching places...");
-    const places = await fetchPlaces(geo.lat, geo.lon);
+async function geocode(location) {
+  const query = encodeURIComponent(location);
+  const resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${query}`);
+  const places = await resp.json();
+  if (!places || !places.length) throw new Error('Location not found');
 
-    clearMarkers();
-    places.forEach(addMarker);
+  return { lat: parseFloat(places[0].lat), lng: parseFloat(places[0].lon) };
+}
 
-    setStatus(`Loaded ${places.length} places`);
+function nearbySearch(service, request) {
+  return new Promise((resolve, reject) => {
+    service.nearbySearch(request, (results, status, pagination) => {
+      if (status !== google.maps.places.PlacesServiceStatus.OK && status !== google.maps.places.PlacesServiceStatus.ZERO_RESULTS) {
+        reject(`Places search failed (${status})`);
+        return;
+      }
 
-  } catch (e) {
-    setStatus("Error: " + e);
-    console.error(e);
+      if (!results) results = [];
+      if (pagination && pagination.hasNextPage) {
+        pagination.nextPage();
+        setTimeout(() => {
+          // google sends next page automatically via callback
+        }, 1000);
+      }
+      resolve(results);
+    });
+  });
+}
+
+async function gatherPlaces(location, radius, categories) {
+  const service = new google.maps.places.PlacesService(map);
+  const all = [];
+  const seenIds = new Set();
+
+  for (const cat of categories) {
+    const req = {
+      location,
+      radius: Number(radius),
+      type: cat.type,
+      keyword: cat.keyword
+    };
+
+    // keep only available keys
+    if (!req.type) delete req.type;
+    if (!req.keyword) delete req.keyword;
+
+    try {
+      let pageResults = [];
+      let nextPageToken;
+      let requestObj = req;
+
+      // The PlacesService handles pagination internally; we call once and rely on callback.
+      const results = await nearbySearch(service, requestObj);
+      pageResults = results || [];
+
+      for (const place of pageResults) {
+        if (!seenIds.has(place.place_id)) {
+          seenIds.add(place.place_id);
+          all.push(place);
+        }
+      }
+
+    } catch (err) {
+      console.warn('category search failed', cat.label, err);
+    }
   }
-}
-</script>
 
+  return all;
+}
+
+function fitMapToMarkers(places) {
+  const bounds = new google.maps.LatLngBounds();
+  places.forEach(p => {
+    if (!p.geometry?.location) return;
+    bounds.extend(p.geometry.location);
+  });
+  if (!bounds.isEmpty()) map.fitBounds(bounds);
+}
+
+async function start() {
+  const key = document.getElementById('apiKey').value.trim();
+  const loc = document.getElementById('location').value.trim();
+
+  if (!key) return alert('Enter your Google API key.');
+  if (!loc) return alert('Enter an area / pincode.');
+
+  if (!selected.size) return alert('Pick at least one category to search.');
+
+  logStatus('Loading Google Maps...');
+  try {
+    await loadGoogleApi(key);
+  } catch (err) {
+    logStatus(err);
+    return;
+  }
+
+  logStatus('Geocoding location...');
+  let pos;
+  try {
+    pos = await geocode(loc);
+  } catch (err) {
+    logStatus('Geocode failed: ' + err.message);
+    return;
+  }
+
+  map = new google.maps.Map(mapEl, {
+    center: pos,
+    zoom: 14,
+    styles: [{elementType:'geometry', stylers:[{color:'#0f1726'}]}]
+  });
+
+  clearMarkers();
+
+  const categories = PLACE_CATEGORIES.filter(item => selected.has(item.label));
+  logStatus(`Finding ${categories.length} category(s) around selected point...`);
+  let places;
+  try {
+    places = await gatherPlaces(pos, radiusEl.value, categories);
+  } catch (err) {
+    logStatus('Search error: ' + err);
+    return;
+  }
+
+  if (!places.length) {
+    logStatus('No places found for selected categories in this radius.');
+    renderResults([]);
+    return;
+  }
+
+  places.forEach(addMarker);
+  fitMapToMarkers(places);
+
+  renderResults(places);
+  logStatus(`Found ${places.length} unique places`);
+}
+
+renderCategories();
+</script>
 </body>
 </html>
