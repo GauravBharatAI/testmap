@@ -184,15 +184,15 @@ function clearMarkers() {
 }
 
 function addMarker(place) {
-  if (!place.geometry?.location) return;
+  if (!place.location) return;
   const marker = new google.maps.Marker({
-    position: place.geometry.location,
+    position: place.location,
     map,
-    title: place.name
+    title: place.displayName
   });
 
   const info = new google.maps.InfoWindow({
-    content: `<strong>${place.name}</strong><br>${place.vicinity || ''}<br>${place.types?.[0] || ''}`
+    content: `<strong>${place.displayName}</strong><br>${place.formattedAddress || ''}<br>${place.types?.[0] || ''}`
   });
 
   marker.addListener('click', () => info.open(map, marker));
@@ -215,8 +215,8 @@ function renderResults(places) {
   places.forEach(p => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${p.name || 'Unknown'}</td>
-      <td>${p.vicinity || p.formatted_address || '—'}</td>
+      <td>${p.displayName || 'Unknown'}</td>
+      <td>${p.formattedAddress || '—'}</td>
       <td>${(p.types && p.types[0]) || '—'}</td>
       <td>${p.rating || '—'}</td>
     `;
@@ -260,55 +260,35 @@ async function geocode(location) {
   return { lat: parseFloat(places[0].lat), lng: parseFloat(places[0].lon) };
 }
 
-function nearbySearch(service, request) {
-  return new Promise((resolve, reject) => {
-    service.nearbySearch(request, (results, status, pagination) => {
-      if (status !== google.maps.places.PlacesServiceStatus.OK && status !== google.maps.places.PlacesServiceStatus.ZERO_RESULTS) {
-        reject(`Places search failed (${status})`);
-        return;
-      }
-
-      if (!results) results = [];
-      if (pagination && pagination.hasNextPage) {
-        pagination.nextPage();
-        setTimeout(() => {
-          // google sends next page automatically via callback
-        }, 1000);
-      }
-      resolve(results);
-    });
-  });
+function nearbySearch(request) {
+  return google.maps.places.Place.searchNearby(request);
 }
 
 async function gatherPlaces(location, radius, categories) {
-  const service = new google.maps.places.PlacesService(map);
   const all = [];
   const seenIds = new Set();
 
+  const latLng = new google.maps.LatLng(location.lat, location.lng);
+
   for (const cat of categories) {
     const req = {
-      location,
-      radius: Number(radius),
-      type: cat.type,
-      keyword: cat.keyword
+      location: latLng,
+      radius: Number(radius)
     };
 
-    // keep only available keys
-    if (!req.type) delete req.type;
-    if (!req.keyword) delete req.keyword;
+    if (cat.type) {
+      req.includedTypes = [cat.type];
+    } else if (cat.keyword) {
+      req.textQuery = cat.keyword;
+    }
 
     try {
-      let pageResults = [];
-      let nextPageToken;
-      let requestObj = req;
+      const response = await nearbySearch(req);
+      const places = response.places || [];
 
-      // The PlacesService handles pagination internally; we call once and rely on callback.
-      const results = await nearbySearch(service, requestObj);
-      pageResults = results || [];
-
-      for (const place of pageResults) {
-        if (!seenIds.has(place.place_id)) {
-          seenIds.add(place.place_id);
+      for (const place of places) {
+        if (!seenIds.has(place.id)) {
+          seenIds.add(place.id);
           all.push(place);
         }
       }
@@ -324,8 +304,8 @@ async function gatherPlaces(location, radius, categories) {
 function fitMapToMarkers(places) {
   const bounds = new google.maps.LatLngBounds();
   places.forEach(p => {
-    if (!p.geometry?.location) return;
-    bounds.extend(p.geometry.location);
+    if (!p.location) return;
+    bounds.extend(p.location);
   });
   if (!bounds.isEmpty()) map.fitBounds(bounds);
 }
