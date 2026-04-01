@@ -1,0 +1,191 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Advanced Map Extractor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body {
+  background:#0d0d0d;
+  color:#fff;
+  font-family:system-ui;
+  margin:0;
+}
+
+.header {
+  padding:20px;
+  background:#111;
+  border-bottom:1px solid #222;
+}
+
+input {
+  padding:10px;
+  margin:5px;
+  border-radius:6px;
+  border:1px solid #333;
+  background:#000;
+  color:#fff;
+}
+
+button {
+  padding:10px 20px;
+  background:#00e5a0;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+  font-weight:bold;
+}
+
+#map {
+  height:500px;
+}
+
+.status {
+  padding:10px;
+  font-size:14px;
+  color:#aaa;
+}
+</style>
+</head>
+
+<body>
+
+<div class="header">
+  <input id="apiKey" placeholder="Google API Key" style="width:260px">
+  <input id="location" placeholder="Enter pincode or area">
+  <button onclick="start()">Search</button>
+</div>
+
+<div id="map"></div>
+<div class="status" id="status">Ready</div>
+
+<script>
+let map, markers = [];
+
+function setStatus(msg) {
+  document.getElementById("status").textContent = msg;
+}
+
+// LOAD GOOGLE MAP (CORRECT WAY)
+function loadMap(apiKey) {
+  return new Promise((resolve, reject) => {
+    if (window.google) return resolve();
+
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&loading=async`;
+    script.async = true;
+    script.defer = true;
+
+    script.onload = resolve;
+    script.onerror = () => reject("Map failed to load");
+
+    document.head.appendChild(script);
+  });
+}
+
+function initMap(lat, lon) {
+  map = new google.maps.Map(document.getElementById("map"), {
+    center: { lat, lng: lon },
+    zoom: 14
+  });
+}
+
+function clearMarkers() {
+  markers.forEach(m => m.setMap(null));
+  markers = [];
+}
+
+function addMarker(p) {
+  const m = new google.maps.Marker({
+    position: { lat: p.lat, lng: p.lon },
+    map,
+    title: p.name
+  });
+
+  const info = new google.maps.InfoWindow({
+    content: `<b>${p.name}</b><br>${p.type}`
+  });
+
+  m.addListener("click", () => info.open(map, m));
+  markers.push(m);
+}
+
+// SAFE GEOCODE
+async function geocode(q) {
+  const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`);
+  const data = await res.json();
+
+  if (!data.length) throw "Location not found";
+
+  const lat = parseFloat(data[0].lat);
+  const lon = parseFloat(data[0].lon);
+
+  if (isNaN(lat) || isNaN(lon)) throw "Invalid coordinates";
+
+  return { lat, lon };
+}
+
+// LIMITED QUERY (avoid 429)
+async function fetchPlaces(lat, lon) {
+  const query = `
+  [out:json][timeout:15];
+  (
+    node["amenity"="restaurant"](around:1500,${lat},${lon});
+    node["amenity"="hospital"](around:1500,${lat},${lon});
+  );
+  out;
+  `;
+
+  const res = await fetch("https://overpass-api.de/api/interpreter", {
+    method: "POST",
+    body: query
+  });
+
+  if (!res.ok) throw "Rate limit hit. Try again in 10 sec.";
+
+  const data = await res.json();
+
+  return data.elements.map(el => ({
+    name: el.tags?.name || "Unnamed",
+    type: el.tags?.amenity,
+    lat: el.lat,
+    lon: el.lon
+  }));
+}
+
+// MAIN
+async function start() {
+  const key = document.getElementById("apiKey").value.trim();
+  const loc = document.getElementById("location").value.trim();
+
+  if (!key) return alert("Enter API key");
+  if (!loc) return alert("Enter location");
+
+  try {
+    setStatus("Loading map...");
+    await loadMap(key);
+
+    setStatus("Finding location...");
+    const geo = await geocode(loc);
+
+    initMap(geo.lat, geo.lon);
+
+    setStatus("Fetching places...");
+    const places = await fetchPlaces(geo.lat, geo.lon);
+
+    clearMarkers();
+    places.forEach(addMarker);
+
+    setStatus(`Loaded ${places.length} places`);
+
+  } catch (e) {
+    setStatus("Error: " + e);
+    console.error(e);
+  }
+}
+</script>
+
+</body>
+</html>
